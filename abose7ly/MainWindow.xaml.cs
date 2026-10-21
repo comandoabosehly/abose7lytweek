@@ -73,16 +73,15 @@ public partial class MainWindow : Window
     }
 
     private sealed record FolderScan(string Path, int Files, long Bytes, int Skipped);
-    private static FolderScan ScanFiles(string path, bool recursive = true)
+    private static FolderScan ScanFiles(string path)
     {
         int count = 0, skipped = 0; long bytes = 0;
         if (!Directory.Exists(path)) return new(path, 0, 0, 0);
-        var options = new EnumerationOptions { RecurseSubdirectories = recursive, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint };
+        var options = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint };
         try
         {
             foreach (var file in Directory.EnumerateFiles(path, "*", options))
-                try { var f = new FileInfo(file); if (f.Exists) { count++; bytes += f.Length; } }
-                catch { skipped++; }
+                try { var f = new FileInfo(file); if (f.Exists) { count++; bytes += f.Length; } } catch { skipped++; }
         }
         catch { skipped++; }
         return new(path, count, bytes, skipped);
@@ -97,13 +96,12 @@ public partial class MainWindow : Window
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Temp"),
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Temp")
         }.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        var scans = targets.Select(p => ScanFiles(p)).ToArray();
+        var scans = targets.Select(ScanFiles).ToArray();
         var report = string.Join("\n", scans.Select(s => $"{s.Path}: {s.Files} ملف، {s.Bytes / 1024d / 1024d:F1} MB"));
-        var total = scans.Sum(s => s.Bytes);
-        var answer = MessageBox.Show("فحص مجلدات الملفات المؤقتة (قد تتداخل بعض المسارات):\n\n" + report +
-            $"\n\nالحذف سيقتصر على الملفات الأقدم من 48 ساعة، مع تخطي الملفات المستخدمة. إجمالي الحجم الظاهر قبل إزالة التداخل: {total / 1024d / 1024d:F1} MB. هل تريد التنظيف؟",
-            "مراجعة وتنظيف الملفات المؤقتة", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-        if (answer != MessageBoxResult.Yes) { Log("ألغى المستخدم تنظيف الملفات المؤقتة."); return; }
+        var answer = MessageBox.Show("مراجعة مجلدات Temp (قد تتداخل بعض المسارات):\n\n" + report +
+            "\n\nسيُحذف فقط ما مرّ عليه 48 ساعة، مع تخطي الملفات المستخدمة. هل تريد المتابعة؟",
+            "تنظيف الملفات المؤقتة", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (answer != MessageBoxResult.Yes) { Log("أُلغي تنظيف Temp."); return; }
         int deleted = 0, skipped = 0; long freed = 0;
         var cutoff = DateTime.UtcNow.AddHours(-48);
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -115,80 +113,99 @@ public partial class MainWindow : Window
                 foreach (var file in Directory.EnumerateFiles(folder, "*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint }))
                 {
                     if (!seen.Add(file)) continue;
-                    try
-                    {
-                        var info = new FileInfo(file);
-                        if (!info.Exists || info.LastWriteTimeUtc > cutoff) continue;
-                        long size = info.Length;
-                        info.Delete();
-                        deleted++; freed += size;
-                    }
+                    try { var info = new FileInfo(file); if (!info.Exists || info.LastWriteTimeUtc > cutoff) continue; long size = info.Length; info.Delete(); deleted++; freed += size; }
                     catch { skipped++; }
                 }
-                // Remove only empty directories under selected temp folders.
-                foreach (var dir in Directory.EnumerateDirectories(folder, "*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint }).OrderByDescending(x => x.Length))
-                    try { if (!Directory.EnumerateFileSystemEntries(dir).Any()) Directory.Delete(dir, false); } catch { }
             }
             catch { skipped++; }
         }
-        var summary = $"انتهى التنظيف: حذف {deleted} ملفًا، تخطّي {skipped} ملفًا، وتحرير {freed / 1024d / 1024d:F1} MB تقريبًا. لم يتم حذف ملفات حديثة.";
-        Log(summary);
-        MessageBox.Show(summary, "نتيجة التنظيف", MessageBoxButton.OK, MessageBoxImage.Information);
+        var summary = $"تنظيف Temp: حذف {deleted} ملفًا، تخطّي {skipped}، تحرير {freed / 1024d / 1024d:F1} MB تقريبًا.";
+        Log(summary); MessageBox.Show(summary, "النتيجة");
+    }
+
+    private async void ProcessScan_Click(object sender, RoutedEventArgs e)
+    {
+        ProcessScanButton.IsEnabled = false;
+        try
+        {
+            var before = Process.GetProcesses().Select(p => { try { return (p.Id, Name: p.ProcessName, Cpu: p.TotalProcessorTime, Memory: p.WorkingSet64); } catch { return (p.Id, Name: p.ProcessName, Cpu: TimeSpan.Zero, Memory: 0L); } }).ToDictionary(x => x.Id);
+            await Task.Delay(1200);
+            var cpuCount = Math.Max(1, Environment.ProcessorCount);
+            var after = Process.GetProcesses().Select(p =>
+            {
+                try
+                {
+                    var cpu = p.TotalProcessorTime;
+                    var mem = p.WorkingSet64;
+                    if (before.TryGetValue(p.Id, out var b))
+                        return (p.Id, Name: p.ProcessName, CpuPercent: Math.Max(0, (cpu - b.Cpu).TotalMilliseconds / 1200d / cpuCount * 100d), Memory: mem);
+                    return (p.Id, Name: p.ProcessName, CpuPercent: 0d, Memory: mem);
+                }
+                catch { return (p.Id, Name: p.ProcessName, CpuPercent: 0d, Memory: 0L); }
+                finally { p.Dispose(); }
+            }).OrderByDescending(p => p.CpuPercent).Take(10).ToArray();
+            var lines = after.Select(p => $"{p.Name} (PID {p.Id}) — CPU {p.CpuPercent:F1}% تقريبًا، RAM {p.Memory / 1024d / 1024d:F0} MB");
+            var report = "أعلى العمليات حسب قياس مدته 1.2 ثانية (النسبة تقديرية):\n\n" + string.Join("\n", lines) +
+                "\n\nلن يغلق البرنامج خدمات Windows أو العمليات تلقائيًا. أغلق فقط تطبيقًا تعرفه ولا تحتاجه.";
+            Log("تم فحص العمليات واستهلاك المعالج والذاكرة.");
+            MessageBox.Show(report, "مراقبة استهلاك الجهاز");
+        }
+        catch (Exception ex) { Log("تعذر فحص العمليات: " + ex.Message); MessageBox.Show(ex.Message, "خطأ"); }
+        finally { ProcessScanButton.IsEnabled = true; }
+    }
+
+    private void IpadView_Click(object sender, RoutedEventArgs e)
+    {
+        var result = MessageBox.Show("عرض iPad في المحاكي يعتمد على خيارات الدقة ونسبة العرض التي يدعمها إصدار GameLoop لديك. افتح إعدادات المحاكي لتغيير الدقة يدويًا؛ لن نكتب إعدادات سرية أو نفرض نسبة غير مدعومة. هل تريد فتح مجلد المحاكي الآن؟",
+            "إعداد عرض iPad", MessageBoxButton.YesNo, MessageBoxImage.Information);
+        if (result == MessageBoxResult.Yes) OpenDetected_Click(sender, e);
+        Log("تم فتح إرشادات عرض iPad؛ لم تُفرض دقة غير مدعومة.");
+    }
+
+    private void DownloadKorea_Click(object sender, RoutedEventArgs e)
+    {
+        const string url = "https://play.google.com/store/apps/details?id=com.pubg.krmobile";
+        try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); Log("تم فتح صفحة Google Play الرسمية لنسخة PUBG Mobile KR."); }
+        catch (Exception ex) { Log("تعذر فتح صفحة النسخة الكورية: " + ex.Message); MessageBox.Show("افتح الرابط الرسمي يدويًا:\n" + url); }
+        MessageBox.Show("تم فتح صفحة Google Play الرسمية لنسخة PUBG Mobile KR. توفر التثبيت يعتمد على المنطقة والحساب والجهاز. لن يتم تنزيل APK من مصدر غير موثوق.", "نسخة PUBG الكورية");
     }
 
     private void ScanRepair_Click(object sender, RoutedEventArgs e)
     {
-        Log("بدء فحص الصيانة الشامل.");
-        Detect_Click(sender, e);
-        var paths = new[]
-        {
-            Environment.GetEnvironmentVariable("TEMP") ?? Path.GetTempPath(),
+        Log("بدء فحص الصيانة الشامل."); Detect_Click(sender, e);
+        var paths = new[] { Environment.GetEnvironmentVariable("TEMP") ?? Path.GetTempPath(),
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Temp"),
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Temp"),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Prefetch")
-        }.Distinct(StringComparer.OrdinalIgnoreCase);
-        foreach (var p in paths)
-        {
-            var s = ScanFiles(p);
-            Log($"فحص: {s.Path} — {s.Files} ملف، {s.Bytes / 1024d / 1024d:F1} MB.");
-        }
-        Log("Prefetch تم فحصه فقط: لا يُنصح بحذفه دوريًا، لأن Windows يديره وقد يؤدي الحذف إلى بطء مؤقت عند إعادة بناء البيانات.");
-        Log("بدء التشغيل والخدمات: لم يتم تعطيل أي شيء تلقائيًا. راجع إدارة المهام لتجنب إيقاف خدمات النظام أو برامج الأمان.");
-        Log("Key Mapping والجرافيك: لم يتم تعديل ملفات اللعبة دون تحديد صيغة مدعومة ومختبرة.");
-        MessageBox.Show("اكتمل فحص الصيانة. تمت مراجعة مسارات Temp وPrefetch والمسارات المعروفة للمحاكي. التنظيف يحتاج موافقتك من زر تنظيف الملفات المؤقتة. لم يتم حذف Prefetch أو تعطيل خدمات النظام أو فرض FPS.", "abose7ly - نتيجة الفحص", MessageBoxButton.OK, MessageBoxImage.Information);
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Prefetch") }.Distinct(StringComparer.OrdinalIgnoreCase);
+        foreach (var p in paths) { var s = ScanFiles(p); Log($"فحص: {s.Path} — {s.Files} ملف، {s.Bytes / 1024d / 1024d:F1} MB."); }
+        Log("Prefetch تم فحصه فقط، ولا يُحذف دوريًا."); Log("لم يتم إيقاف خدمات النظام تلقائيًا.");
+        Log("Key Mapping والجرافيك لم يتم تعديلهما دون صيغة مدعومة ومختبرة.");
+        MessageBox.Show("اكتمل الفحص. استخدم فحص العمليات لمعرفة ما يستهلك CPU/RAM. لم يتم إيقاف خدمات Windows أو تعديل ملفات اللعبة.", "نتيجة الفحص");
     }
 
     private void Performance_Click(object sender, RoutedEventArgs e)
     {
-        var text = "تحسينات آمنة:\n• أغلق البرامج الثقيلة غير الضرورية من Task Manager قبل اللعب.\n• اترك مساحة حرة مناسبة على قرص Windows وقرص المحاكي.\n• حدّث تعريف كارت الشاشة من المصدر الرسمي.\n• على 8 GB وIntel HD: استخدم أقل جودة متاحة وأغلق المتصفح والتطبيقات الثقيلة.\n• على جهاز بكارت منفصل وRAM أكبر: ابدأ بإعداد متوسط واختبر الثبات.\n• لا تحذف Prefetch ولا تعطل خدمات Windows عشوائيًا؛ لا تضمن هذه الخطوات زيادة FPS.\n\nالتطبيق لا يغيّر خطة الطاقة أو خدمات بدء التشغيل تلقائيًا حاليًا.";
-        Log("تم عرض قائمة تحسين الأداء الآمنة.");
-        MessageBox.Show(text, "تحسين أداء الجهاز");
+        var text = "تحسين آمن: أغلق البرامج الثقيلة التي تعرفها، اترك مساحة على القرص، وحدّث تعريف الرسوميات رسميًا. على 8 GB وIntel HD استخدم أقل إعدادات متاحة. لا توقف خدمات Windows عشوائيًا ولا تحذف Prefetch. ارتفاع الحرارة إلى 100°C يستلزم إيقاف اللعب وفحص التبريد؛ البرنامج لا يستطيع تحديد حرارة المعالج بدقة من دون مصدر قياس مناسب.";
+        Log("تم عرض توصيات الأداء."); MessageBox.Show(text, "تحسين الأداء");
     }
 
     private void Safety_Click(object sender, RoutedEventArgs e) =>
-        MessageBox.Show("• التنظيف يطلب موافقتك ويتخطى الملفات المقفلة.\n• Prefetch يُفحص ولا يُحذف.\n• لا يتم تعطيل Defender أو خدمات Windows الأساسية.\n• لا يتم تعديل ملفات anti-cheat أو تجاوز الحماية.\n• نزّل اللعبة والمحاكي من مصادر رسمية.", "إرشادات السلامة");
-
+        MessageBox.Show("لا يتم تعطيل Defender أو خدمات Windows الأساسية، ولا يتم تعديل ملفات anti-cheat. أوقف اللعب إذا وصلت الحرارة إلى 100°C وتحقق من التبريد. نزّل اللعبة من المصادر الرسمية.", "إرشادات السلامة");
     private void Rollback_Click(object sender, RoutedEventArgs e) =>
         MessageBox.Show("استخدم أداة التحديث أو الإزالة الرسمية. قد تمنع الخوادم الإصدارات القديمة؛ لا تستخدم ملفات مجهولة أو طرق تجاوز التحديث.", "الرجوع الآمن");
 
     private static string GetHardwareSummary()
     {
         string cpu = Environment.GetEnvironmentVariable("PROCESSOR_IDENTIFIER") ?? "غير معروف";
-        string arch = RuntimeInformation.OSArchitecture.ToString();
-        string os = $"{Environment.OSVersion.VersionString} ({arch})";
-        return $"النظام: {os}\nالمعالج: {cpu}\nالرامات: راجع Task Manager > Performance للحصول على القيمة الدقيقة.\nكارت الشاشة: راجع Task Manager > Performance؛ قد تختلف البيانات حسب التعريف.";
+        return $"النظام: {Environment.OSVersion.VersionString} ({RuntimeInformation.OSArchitecture})\nالمعالج: {cpu}\nالرامات وكارت الشاشة: راجع Task Manager > Performance للتفاصيل الدقيقة.";
     }
-
     private void OpenLog_Click(object sender, RoutedEventArgs e)
     {
         var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "abose7ly", "logs");
-        Directory.CreateDirectory(path);
-        var file = Path.Combine(path, $"session-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
-        File.WriteAllText(file, _log.ToString(), Encoding.UTF8);
-        Log("تم حفظ سجل الجلسة: " + file);
+        Directory.CreateDirectory(path); var file = Path.Combine(path, $"session-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
+        File.WriteAllText(file, _log.ToString(), Encoding.UTF8); Log("تم حفظ سجل الجلسة: " + file);
         MessageBox.Show("تم حفظ السجل هنا:\n" + file, "abose7ly");
     }
-
     private static void OpenFolder(string path)
     {
         try { if (!Directory.Exists(path)) Directory.CreateDirectory(path); Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true }); }
