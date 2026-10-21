@@ -55,17 +55,16 @@ public partial class MainWindow : Window
 
     private void ChooseFolder_Click(object sender, RoutedEventArgs e)
     {
-        using var dialog = new System.Windows.Forms.FolderBrowserDialog
+        var dialog = new OpenFolderDialog
         {
-            Description = "اختر مجلد تثبيت GameLoop أو Tenstore",
-            UseDescriptionForTitle = true,
-            ShowNewFolderButton = false
+            Title = "اختر مجلد تثبيت GameLoop أو Tenstore",
+            Multiselect = false
         };
-        if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK && Directory.Exists(dialog.SelectedPath))
+        if (dialog.ShowDialog(this) == true && Directory.Exists(dialog.FolderName))
         {
-            if (!_foundPaths.Contains(dialog.SelectedPath, StringComparer.OrdinalIgnoreCase))
-                _foundPaths.Insert(0, dialog.SelectedPath);
-            DetectionText.Text = "المجلد المحدد يدويًا:\n" + dialog.SelectedPath +
+            if (!_foundPaths.Contains(dialog.FolderName, StringComparer.OrdinalIgnoreCase))
+                _foundPaths.Insert(0, dialog.FolderName);
+            DetectionText.Text = "المجلد المحدد يدويًا:\n" + dialog.FolderName +
                 "\n\nلم يتم تعديل أي ملف. استخدم أدوات المحاكي الأصلية لتغيير الإعدادات.";
             StatusBadge.Text = "تم تحديد مجلد";
         }
