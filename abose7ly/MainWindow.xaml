@@ -1,14 +1,14 @@
 <Window x:Class="Abose7ly.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="abose7ly | PUBG GameLoop Toolkit" Height="850" Width="1180"
-        MinHeight="700" MinWidth="980" WindowStartupLocation="CenterScreen"
+        Title="abose7ly | PUBG GameLoop Toolkit" Height="900" Width="1200"
+        MinHeight="720" MinWidth="1000" WindowStartupLocation="CenterScreen"
         Background="{StaticResource PageBrush}" FlowDirection="RightToLeft">
   <Grid Margin="24">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <DockPanel Grid.Row="0" Margin="0,0,0,18">
       <StackPanel><TextBlock Text="abose7ly" FontSize="32" FontWeight="Bold" Foreground="{StaticResource AccentBrush}"/>
-        <TextBlock Text="أداة تشخيص وصيانة آمنة لـ PUBG ومحاكيات Android" FontSize="15" Margin="0,4,0,0"/></StackPanel>
+        <TextBlock Text="أداة تشخيص وصيانة وتحسين آمنة لـ PUBG ومحاكيات Android" FontSize="15" Margin="0,4,0,0"/></StackPanel>
       <Border DockPanel.Dock="Left" Background="#172033" CornerRadius="8" Padding="14,8" VerticalAlignment="Center"><TextBlock x:Name="StatusBadge" Text="جاهز للفحص" Foreground="#93C5FD" FontWeight="SemiBold"/></Border>
     </DockPanel>
     <Border Grid.Row="1" Background="#172033" CornerRadius="10" Padding="16" Margin="0,0,0,14">
@@ -18,8 +18,8 @@
         <TextBlock x:Name="HardwareText" Text="معلومات الجهاز تظهر بعد الفحص." TextWrapping="Wrap" Foreground="#93C5FD" Margin="0,8,0,0"/>
         <WrapPanel Margin="0,10,0,0">
           <Button Content="فحص الجهاز" Click="Detect_Click"/><Button Content="اختيار مجلد المحاكي" Click="ChooseFolder_Click" Background="#334155"/>
-          <Button Content="فحص وإصلاح آمن" Click="ScanRepair_Click"/><Button Content="حفظ سجل الجلسة" Click="OpenLog_Click" Background="#334155"/>
-          <Button Content="إرشادات السلامة" Click="Safety_Click" Background="#334155"/>
+          <Button Content="فحص وصيانة آمنة" Click="ScanRepair_Click"/><Button x:Name="ProcessScanButton" Content="فحص CPU وRAM" Click="ProcessScan_Click" Background="#0F766E"/>
+          <Button Content="حفظ سجل الجلسة" Click="OpenLog_Click" Background="#334155"/><Button Content="إرشادات السلامة" Click="Safety_Click" Background="#334155"/>
         </WrapPanel>
       </StackPanel>
     </Border>
@@ -27,34 +27,45 @@
       <StackPanel>
         <Border Background="{StaticResource PanelBrush}" CornerRadius="10" Padding="16" Margin="0,0,0,10">
           <StackPanel><TextBlock Text="نسخة اللعبة" FontSize="19" FontWeight="SemiBold"/>
-            <TextBlock Text="اختر النسخة لتسجيلها في الفحص؛ هذا لا يثبت اللعبة ولا يغيّر ملفاتها." Margin="0,5,0,8" Foreground="#CBD5E1"/>
+            <TextBlock Text="اختر النسخة للتشخيص. التنزيل يفتح المتجر الرسمي فقط، وتوفره يعتمد على المنطقة والحساب." Margin="0,5,0,8" Foreground="#CBD5E1"/>
             <ComboBox x:Name="RegionBox" Width="340" HorizontalAlignment="Right" SelectedIndex="0" SelectionChanged="RegionBox_SelectionChanged">
               <ComboBoxItem Content="PUBG Mobile Global — العالمية"/><ComboBoxItem Content="PUBG Mobile KR — الكورية"/>
               <ComboBoxItem Content="PUBG Mobile Taiwan — التايوانية"/><ComboBoxItem Content="PUBG Mobile Vietnam — الفيتنامية"/>
               <ComboBoxItem Content="Game for Peace — الصينية"/>
             </ComboBox>
             <TextBlock x:Name="RegionText" Text="اختر نسخة اللعبة." TextWrapping="Wrap" Foreground="#93C5FD" Margin="0,8,0,0"/>
+            <WrapPanel Margin="0,8,0,0"><Button Content="فتح صفحة تحميل PUBG KR الرسمية" Click="DownloadKorea_Click"/><Button Content="إعداد iPad View" Click="IpadView_Click" Background="#334155"/></WrapPanel>
           </StackPanel>
         </Border>
         <UniformGrid Columns="2">
           <Border Background="{StaticResource PanelBrush}" CornerRadius="10" Padding="16" Margin="0,0,6,6"><StackPanel>
-            <TextBlock Text="Key Mapping والتحكم" FontSize="19" FontWeight="SemiBold"/>
-            <TextBlock Text="يفحص المسارات ويحدد ما إذا كان المحاكي معروفًا. لن يكتب إعدادات تحكم غير موثقة أو غير متوافقة." TextWrapping="Wrap" Margin="0,7,0,10" Foreground="#CBD5E1"/>
+            <TextBlock Text="Key Mapping والكتابة" FontSize="19" FontWeight="SemiBold"/>
+            <TextBlock Text="فحص مسارات المحاكي. إصلاح الكتابة الشفافة أو تخطيط الأزرار يتطلب معرفة ملف الإعدادات المدعوم في نسختك." TextWrapping="Wrap" Margin="0,7,0,10" Foreground="#CBD5E1"/>
             <Button Content="فتح مجلد المحاكي" Click="OpenDetected_Click" HorizontalAlignment="Right"/>
           </StackPanel></Border>
           <Border Background="{StaticResource PanelBrush}" CornerRadius="10" Padding="16" Margin="6,0,0,6"><StackPanel>
-            <TextBlock Text="الجرافيك والأداء" FontSize="19" FontWeight="SemiBold"/>
-            <TextBlock Text="توصيات محافظة حسب إمكانيات الجهاز، دون فرض FPS غير مدعوم." TextWrapping="Wrap" Margin="0,7,0,10" Foreground="#CBD5E1"/>
-            <Button Content="عرض توصيات الأداء" Click="Performance_Click" HorizontalAlignment="Right"/>
+            <TextBlock Text="iPad View والجرافيك" FontSize="19" FontWeight="SemiBold"/>
+            <TextBlock Text="فتح إعدادات المحاكي وإرشادات نسبة العرض. لن تُفرض دقة أو FPS غير مدعومين." TextWrapping="Wrap" Margin="0,7,0,10" Foreground="#CBD5E1"/>
+            <Button Content="إعداد iPad View" Click="IpadView_Click" HorizontalAlignment="Right"/>
           </StackPanel></Border>
           <Border Background="{StaticResource PanelBrush}" CornerRadius="10" Padding="16" Margin="0,6,6,0"><StackPanel>
-            <TextBlock Text="تنظيف Temp" FontSize="19" FontWeight="SemiBold"/>
-            <TextBlock Text="يفحص الملفات المؤقتة ثم يطلب موافقتك قبل حذف الملفات الأقدم من 24 ساعة؛ يتخطى الملفات المقفلة." TextWrapping="Wrap" Margin="0,7,0,10" Foreground="#CBD5E1"/>
+            <TextBlock Text="تنظيف الملفات المؤقتة" FontSize="19" FontWeight="SemiBold"/>
+            <TextBlock Text="يفحص %TEMP% وTMP وLocalAppData\Temp وWindows\Temp، ثم يطلب موافقتك قبل حذف الملفات الأقدم من 48 ساعة." TextWrapping="Wrap" Margin="0,7,0,10" Foreground="#CBD5E1"/>
             <Button Content="فحص وتنظيف Temp" Click="OpenTemp_Click" HorizontalAlignment="Right"/>
           </StackPanel></Border>
           <Border Background="{StaticResource PanelBrush}" CornerRadius="10" Padding="16" Margin="6,6,0,0"><StackPanel>
-            <TextBlock Text="الإعدادات والرجوع" FontSize="19" FontWeight="SemiBold"/>
-            <TextBlock Text="استخدم الإعدادات الرسمية للمحاكي واللعبة؛ لا يتم تعطيل الحماية أو تجاوز التحديث." TextWrapping="Wrap" Margin="0,7,0,10" Foreground="#CBD5E1"/>
+            <TextBlock Text="تحميل PUBG الكورية" FontSize="19" FontWeight="SemiBold"/>
+            <TextBlock Text="يفتح صفحة Google Play الرسمية. لا ينزّل APK من مواقع مجهولة أو يتجاوز قيود المنطقة." TextWrapping="Wrap" Margin="0,7,0,10" Foreground="#CBD5E1"/>
+            <Button Content="فتح المتجر الرسمي" Click="DownloadKorea_Click" HorizontalAlignment="Right"/>
+          </StackPanel></Border>
+          <Border Background="{StaticResource PanelBrush}" CornerRadius="10" Padding="16" Margin="0,6,6,0"><StackPanel>
+            <TextBlock Text="تحسين الأداء والحرارة" FontSize="19" FontWeight="SemiBold"/>
+            <TextBlock Text="اعرف العمليات الأعلى استهلاكًا للمعالج والذاكرة قبل إغلاق أي برنامج. لا يتم قتل الخدمات تلقائيًا." TextWrapping="Wrap" Margin="0,7,0,10" Foreground="#CBD5E1"/>
+            <Button Content="فحص CPU وRAM" Click="ProcessScan_Click" HorizontalAlignment="Right"/>
+          </StackPanel></Border>
+          <Border Background="{StaticResource PanelBrush}" CornerRadius="10" Padding="16" Margin="6,6,0,0"><StackPanel>
+            <TextBlock Text="إعدادات Windows والرجوع" FontSize="19" FontWeight="SemiBold"/>
+            <TextBlock Text="لا يتم تعطيل Defender أو خدمات النظام عشوائيًا. استخدم الإعدادات الرسمية القابلة للتراجع." TextWrapping="Wrap" Margin="0,7,0,10" Foreground="#CBD5E1"/>
             <WrapPanel><Button Content="فتح مجلد الإعدادات" Click="OpenSettings_Click" Background="#334155"/><Button Content="إرشادات الرجوع" Click="Rollback_Click" Background="#334155"/></WrapPanel>
           </StackPanel></Border>
         </UniformGrid>
@@ -65,6 +76,6 @@
         </Border>
       </StackPanel>
     </ScrollViewer>
-    <TextBlock Grid.Row="3" Text="نسخة تطويرية: إصلاح Key Mapping والجرافيك تلقائيًا يتطلب اختبار صيغة الإعدادات لكل إصدار؛ لا يتم تعديل anti-cheat أو فرض ميزات غير مدعومة." Foreground="#94A3B8" Margin="0,12,0,0" TextWrapping="Wrap"/>
+    <TextBlock Grid.Row="3" Text="مهم: ارتفاع الحرارة إلى 100°C يستلزم إيقاف اللعب وفحص التبريد. هذه النسخة تفحص العمليات ولا توقف خدمات Windows أو تعدّل ملفات الحماية." Foreground="#FCA5A5" Margin="0,12,0,0" TextWrapping="Wrap"/>
   </Grid>
 </Window>
