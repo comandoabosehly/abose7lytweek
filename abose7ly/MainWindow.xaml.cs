@@ -12,13 +12,11 @@ public partial class MainWindow : Window
 {
     private readonly List<string> _foundPaths = new();
     private readonly StringBuilder _log = new();
-
     public MainWindow() => InitializeComponent();
 
     private void Log(string message)
     {
-        var line = $"[{DateTime.Now:HH:mm:ss}] {message}";
-        _log.AppendLine(line);
+        _log.AppendLine($"[{DateTime.Now:HH:mm:ss}] {message}");
         if (LogText is not null) LogText.Text = _log.ToString();
     }
 
@@ -36,8 +34,7 @@ public partial class MainWindow : Window
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Tenstore Android Connect")
         };
         foreach (var path in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
-            try { if (Directory.Exists(path)) _foundPaths.Add(path); } catch (IOException) { } catch (UnauthorizedAccessException) { }
-
+            try { if (Directory.Exists(path)) _foundPaths.Add(path); } catch { }
         HardwareText.Text = GetHardwareSummary();
         DetectionText.Text = _foundPaths.Count == 0
             ? "لم يتم العثور على مسار معروف. اختر مجلد المحاكي يدويًا؛ عدم العثور لا يعني أن المحاكي غير مثبت."
@@ -75,70 +72,101 @@ public partial class MainWindow : Window
         else MessageBox.Show("لم يتم العثور على مجلد محاكي معروف. حدّد المجلد يدويًا.", "abose7ly");
     }
 
-    private void OpenTemp_Click(object sender, RoutedEventArgs e)
+    private sealed record FolderScan(string Path, int Files, long Bytes, int Skipped);
+    private static FolderScan ScanFiles(string path, bool recursive = true)
     {
-        var temp = Path.GetTempPath();
-        int count = 0, skipped = 0;
-        long bytes = 0;
+        int count = 0, skipped = 0; long bytes = 0;
+        if (!Directory.Exists(path)) return new(path, 0, 0, 0);
+        var options = new EnumerationOptions { RecurseSubdirectories = recursive, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint };
         try
         {
-            foreach (var file in Directory.EnumerateFiles(temp, "*", SearchOption.TopDirectoryOnly))
-            {
-                try { var info = new FileInfo(file); if (info.Exists) { count++; bytes += info.Length; } }
+            foreach (var file in Directory.EnumerateFiles(path, "*", options))
+                try { var f = new FileInfo(file); if (f.Exists) { count++; bytes += f.Length; } }
                 catch { skipped++; }
-            }
         }
-        catch (Exception ex) { Log("فشل فحص Temp: " + ex.Message); MessageBox.Show(ex.Message, "abose7ly"); return; }
-        var mb = bytes / 1024d / 1024d;
-        var answer = MessageBox.Show($"تم العثور على {count} ملفًا في المستوى الرئيسي من Temp ({mb:F1} MB).\n\nيمكن حذف الملفات الأقدم من 24 ساعة فقط. سيتم تخطي الملفات المستخدمة أو التي يرفض Windows الوصول إليها. هل تريد بدء التنظيف؟",
-            "تأكيد تنظيف الملفات المؤقتة", MessageBoxButton.YesNo, MessageBoxImage.Warning);
-        if (answer != MessageBoxResult.Yes) { Log("ألغى المستخدم تنظيف Temp."); return; }
+        catch { skipped++; }
+        return new(path, count, bytes, skipped);
+    }
 
-        int deleted = 0; long freed = 0;
-        foreach (var file in Directory.EnumerateFiles(temp, "*", SearchOption.TopDirectoryOnly))
+    private void OpenTemp_Click(object sender, RoutedEventArgs e)
+    {
+        var targets = new[]
         {
+            Environment.GetEnvironmentVariable("TEMP") ?? Path.GetTempPath(),
+            Environment.GetEnvironmentVariable("TMP") ?? Path.GetTempPath(),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Temp"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Temp")
+        }.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var scans = targets.Select(p => ScanFiles(p)).ToArray();
+        var report = string.Join("\n", scans.Select(s => $"{s.Path}: {s.Files} ملف، {s.Bytes / 1024d / 1024d:F1} MB"));
+        var total = scans.Sum(s => s.Bytes);
+        var answer = MessageBox.Show("فحص مجلدات الملفات المؤقتة (قد تتداخل بعض المسارات):\n\n" + report +
+            $"\n\nالحذف سيقتصر على الملفات الأقدم من 48 ساعة، مع تخطي الملفات المستخدمة. إجمالي الحجم الظاهر قبل إزالة التداخل: {total / 1024d / 1024d:F1} MB. هل تريد التنظيف؟",
+            "مراجعة وتنظيف الملفات المؤقتة", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (answer != MessageBoxResult.Yes) { Log("ألغى المستخدم تنظيف الملفات المؤقتة."); return; }
+        int deleted = 0, skipped = 0; long freed = 0;
+        var cutoff = DateTime.UtcNow.AddHours(-48);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var folder in targets)
+        {
+            if (!Directory.Exists(folder)) continue;
             try
             {
-                var info = new FileInfo(file);
-                if (!info.Exists || info.LastWriteTimeUtc > DateTime.UtcNow.AddHours(-24)) continue;
-                var size = info.Length;
-                info.Delete();
-                deleted++; freed += size;
+                foreach (var file in Directory.EnumerateFiles(folder, "*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint }))
+                {
+                    if (!seen.Add(file)) continue;
+                    try
+                    {
+                        var info = new FileInfo(file);
+                        if (!info.Exists || info.LastWriteTimeUtc > cutoff) continue;
+                        long size = info.Length;
+                        info.Delete();
+                        deleted++; freed += size;
+                    }
+                    catch { skipped++; }
+                }
+                // Remove only empty directories under selected temp folders.
+                foreach (var dir in Directory.EnumerateDirectories(folder, "*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = FileAttributes.ReparsePoint }).OrderByDescending(x => x.Length))
+                    try { if (!Directory.EnumerateFileSystemEntries(dir).Any()) Directory.Delete(dir, false); } catch { }
             }
             catch { skipped++; }
         }
-        var summary = $"اكتمل تنظيف Temp: حذف {deleted} ملفًا، وتخطّي {skipped} ملفًا، وتحرير {freed / 1024d / 1024d:F1} MB تقريبًا.";
+        var summary = $"انتهى التنظيف: حذف {deleted} ملفًا، تخطّي {skipped} ملفًا، وتحرير {freed / 1024d / 1024d:F1} MB تقريبًا. لم يتم حذف ملفات حديثة.";
         Log(summary);
         MessageBox.Show(summary, "نتيجة التنظيف", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     private void ScanRepair_Click(object sender, RoutedEventArgs e)
     {
-        Log("بدء الفحص العام.");
+        Log("بدء فحص الصيانة الشامل.");
         Detect_Click(sender, e);
-        var temp = Path.GetTempPath();
-        int oldFiles = 0; long oldBytes = 0;
-        try
+        var paths = new[]
         {
-            foreach (var file in Directory.EnumerateFiles(temp, "*", SearchOption.TopDirectoryOnly))
-                try { var f = new FileInfo(file); if (f.Exists && f.LastWriteTimeUtc < DateTime.UtcNow.AddHours(-24)) { oldFiles++; oldBytes += f.Length; } } catch { }
+            Environment.GetEnvironmentVariable("TEMP") ?? Path.GetTempPath(),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Temp"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Temp"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "Prefetch")
+        }.Distinct(StringComparer.OrdinalIgnoreCase);
+        foreach (var p in paths)
+        {
+            var s = ScanFiles(p);
+            Log($"فحص: {s.Path} — {s.Files} ملف، {s.Bytes / 1024d / 1024d:F1} MB.");
         }
-        catch (Exception ex) { Log("تعذر فحص Temp: " + ex.Message); }
-        Log($"Temp: {oldFiles} ملفًا أقدم من 24 ساعة ({oldBytes / 1024d / 1024d:F1} MB) يمكن مراجعتها.");
-        Log("Key Mapping: لا يمكن تعديل ملفات التحكم بأمان دون تحديد صيغة مدعومة خاصة بإصدار المحاكي؛ لم يتم تغييرها.");
-        Log("الجرافيك وFPS: لم يتم فرض قيم غير مدعومة؛ استخدم إعدادات المحاكي/اللعبة الرسمية.");
-        MessageBox.Show("اكتمل الفحص الأولي. تم فحص المسارات وملفات Temp القديمة. لم تُعدّل ملفات اللعبة أو Key Mapping أو FPS؛ هذه الخطوة تحتاج تحققًا من إصدار المحاكي وصيغة الإعدادات المدعومة.", "abose7ly - نتيجة الفحص", MessageBoxButton.OK, MessageBoxImage.Information);
+        Log("Prefetch تم فحصه فقط: لا يُنصح بحذفه دوريًا، لأن Windows يديره وقد يؤدي الحذف إلى بطء مؤقت عند إعادة بناء البيانات.");
+        Log("بدء التشغيل والخدمات: لم يتم تعطيل أي شيء تلقائيًا. راجع إدارة المهام لتجنب إيقاف خدمات النظام أو برامج الأمان.");
+        Log("Key Mapping والجرافيك: لم يتم تعديل ملفات اللعبة دون تحديد صيغة مدعومة ومختبرة.");
+        MessageBox.Show("اكتمل فحص الصيانة. تمت مراجعة مسارات Temp وPrefetch والمسارات المعروفة للمحاكي. التنظيف يحتاج موافقتك من زر تنظيف الملفات المؤقتة. لم يتم حذف Prefetch أو تعطيل خدمات النظام أو فرض FPS.", "abose7ly - نتيجة الفحص", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     private void Performance_Click(object sender, RoutedEventArgs e)
     {
-        var text = "اقتراحات آمنة حسب الجهاز:\n• ذاكرة 8 GB وIntel HD: أقل جودة رسومية، أغلق البرامج الثقيلة وتأكد من وجود مساحة فارغة على القرص.\n• ذاكرة 16 GB وكارت منفصل: ابدأ بإعداد متوسط واختبر الاستقرار.\n• حدّث تعريف الرسوميات من المصدر الرسمي.\n• لا تفرض FPS أو دقة لا يدعمها المحاكي.\n\nالأداة لا تطبّق إعدادات الرسوميات تلقائيًا لأن أسماء الخيارات وملفاتها تختلف بين إصدارات اللعبة والمحاكي.";
-        Log("تم عرض توصيات الأداء.");
-        MessageBox.Show(text, "توصيات الأداء");
+        var text = "تحسينات آمنة:\n• أغلق البرامج الثقيلة غير الضرورية من Task Manager قبل اللعب.\n• اترك مساحة حرة مناسبة على قرص Windows وقرص المحاكي.\n• حدّث تعريف كارت الشاشة من المصدر الرسمي.\n• على 8 GB وIntel HD: استخدم أقل جودة متاحة وأغلق المتصفح والتطبيقات الثقيلة.\n• على جهاز بكارت منفصل وRAM أكبر: ابدأ بإعداد متوسط واختبر الثبات.\n• لا تحذف Prefetch ولا تعطل خدمات Windows عشوائيًا؛ لا تضمن هذه الخطوات زيادة FPS.\n\nالتطبيق لا يغيّر خطة الطاقة أو خدمات بدء التشغيل تلقائيًا حاليًا.";
+        Log("تم عرض قائمة تحسين الأداء الآمنة.");
+        MessageBox.Show(text, "تحسين أداء الجهاز");
     }
 
     private void Safety_Click(object sender, RoutedEventArgs e) =>
-        MessageBox.Show("• تنظيف Temp يقتصر على الملفات الأقدم من 24 ساعة ويطلب موافقتك.\n• لا يتم تعديل ملفات anti-cheat أو تجاوز الحماية.\n• لا يتم تعديل Key Mapping أو FPS تلقائيًا دون صيغة مدعومة ومختبرة.\n• احتفظ بنسخة احتياطية قبل أي تعديل يدوي.\n• نزّل اللعبة والمحاكي من مصادر رسمية.", "إرشادات السلامة");
+        MessageBox.Show("• التنظيف يطلب موافقتك ويتخطى الملفات المقفلة.\n• Prefetch يُفحص ولا يُحذف.\n• لا يتم تعطيل Defender أو خدمات Windows الأساسية.\n• لا يتم تعديل ملفات anti-cheat أو تجاوز الحماية.\n• نزّل اللعبة والمحاكي من مصادر رسمية.", "إرشادات السلامة");
 
     private void Rollback_Click(object sender, RoutedEventArgs e) =>
         MessageBox.Show("استخدم أداة التحديث أو الإزالة الرسمية. قد تمنع الخوادم الإصدارات القديمة؛ لا تستخدم ملفات مجهولة أو طرق تجاوز التحديث.", "الرجوع الآمن");
