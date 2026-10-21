@@ -1,0 +1,61 @@
+name: Build and test abose7ly for Windows
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore abose7ly/abose7ly.csproj
+
+      - name: Build
+        run: dotnet build abose7ly/abose7ly.csproj --configuration Release --no-restore
+
+      - name: Publish self-contained x64
+        run: dotnet publish abose7ly/abose7ly.csproj --configuration Release --runtime win-x64 --self-contained true --output publish
+
+      - name: Validate published app
+        shell: pwsh
+        run: |
+          if (!(Test-Path "publish/abose7ly.exe")) { throw "abose7ly.exe missing from publish output" }
+          if (!(Get-ChildItem "publish" -File | Where-Object { $_.Length -gt 0 })) { throw "Publish directory is empty" }
+
+      - name: Install Inno Setup
+        run: choco install innosetup --yes --no-progress
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $compiler = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (!(Test-Path $compiler)) { $compiler = "${env:ProgramFiles}\Inno Setup 6\ISCC.exe" }
+          if (!(Test-Path $compiler)) { throw "Inno Setup compiler not found" }
+          & $compiler "installer/abose7ly.iss"
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed: $LASTEXITCODE" }
+          if (!(Test-Path "installer/abose7ly_Setup.exe")) { throw "Installer output missing" }
+
+      - name: Upload app and installer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: abose7ly-windows-build
+          path: |
+            publish/**
+            installer/abose7ly_Setup.exe
+          if-no-files-found: error
+          retention-days: 14
