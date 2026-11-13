@@ -123,7 +123,7 @@ public partial class GraphicsProfilesWindow : Window
             try { if (Directory.Exists(p)) _detected.Add(p); } catch { }
 
         var ram = "غير متاح";
-        try { ram = $"{new Microsoft.VisualBasic.Devices.ComputerInfo().TotalPhysicalMemory / 1024d / 1024d / 1024d:F1} GB"; } catch { }
+        try { ram = $"{GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / 1024d / 1024d / 1024d:F1} GB (حد الذاكرة المتاح للعملية)"; } catch { }
         var gpus = new List<string>();
         try
         {
