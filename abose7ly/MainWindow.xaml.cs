@@ -183,6 +183,8 @@ public partial class MainWindow : Window
         MessageBox.Show("اكتمل الفحص. استخدم فحص العمليات لمعرفة ما يستهلك CPU/RAM. لم يتم إيقاف خدمات Windows أو تعديل ملفات اللعبة.", "نتيجة الفحص");
     }
 
+    private void GraphicsProfiles_Click(object sender, RoutedEventArgs e) => new GraphicsProfilesWindow { Owner = this }.ShowDialog();
+
     private void Performance_Click(object sender, RoutedEventArgs e)
     {
         var text = "تحسين آمن: أغلق البرامج الثقيلة التي تعرفها، اترك مساحة على القرص، وحدّث تعريف الرسوميات رسميًا. على 8 GB وIntel HD استخدم أقل إعدادات متاحة. لا توقف خدمات Windows عشوائيًا ولا تحذف Prefetch. ارتفاع الحرارة إلى 100°C يستلزم إيقاف اللعب وفحص التبريد؛ البرنامج لا يستطيع تحديد حرارة المعالج بدقة من دون مصدر قياس مناسب.";
