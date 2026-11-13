@@ -61,7 +61,7 @@
           <Border Background="{StaticResource PanelBrush}" CornerRadius="10" Padding="16" Margin="0,6,6,0"><StackPanel>
             <TextBlock Text="تحسين الأداء والحرارة" FontSize="19" FontWeight="SemiBold"/>
             <TextBlock Text="اعرف العمليات الأعلى استهلاكًا للمعالج والذاكرة قبل إغلاق أي برنامج. لا يتم قتل الخدمات تلقائيًا." TextWrapping="Wrap" Margin="0,7,0,10" Foreground="#CBD5E1"/>
-            <Button Content="فحص CPU وRAM" Click="ProcessScan_Click" HorizontalAlignment="Right"/>
+            <WrapPanel><Button Content="فحص CPU وRAM" Click="ProcessScan_Click"/><Button Content="الجرافيك و120 FPS" Click="GraphicsProfiles_Click" Background="#7C3AED"/></WrapPanel>
           </StackPanel></Border>
           <Border Background="{StaticResource PanelBrush}" CornerRadius="10" Padding="16" Margin="6,6,0,0"><StackPanel>
             <TextBlock Text="إعدادات Windows والرجوع" FontSize="19" FontWeight="SemiBold"/>
