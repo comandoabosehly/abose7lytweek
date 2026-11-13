@@ -12,6 +12,100 @@ public partial class GraphicsProfilesWindow : Window
 
     public GraphicsProfilesWindow() => InitializeComponent();
 
+    private static readonly string[] PubgPackages =
+    {
+        "com.tencent.ig", "com.pubg.krmobile", "com.rekoo.pubgm",
+        "com.vng.pubgmobile", "com.pubg.imobile", "com.tencent.tmgp.pubgmhd"
+    };
+
+    private static string? FindAdb(IEnumerable<string> roots)
+    {
+        var candidates = new List<string>
+        {
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "TxGameAssistant", "ui", "adb.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "TxGameAssistant", "ui", "adb.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "TxGameAssistant", "ui", "AndroidEmulator.exe"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "TxGameAssistant", "ui", "AndroidEmulator.exe")
+        };
+        foreach (var root in roots)
+        {
+            candidates.Add(Path.Combine(root, "ui", "adb.exe"));
+            candidates.Add(Path.Combine(root, "adb.exe"));
+            candidates.Add(Path.Combine(root, "Engine", "adb.exe"));
+            candidates.Add(Path.Combine(root, "EmulatorShell", " adb.exe"));
+        }
+        var pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
+        foreach (var folder in pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+            candidates.Add(Path.Combine(folder.Trim(), "adb.exe"));
+        return candidates.FirstOrDefault(File.Exists);
+    }
+
+    private static (int ExitCode, string Output, string Error) RunAdb(string adb, string args)
+    {
+        using var process = new Process();
+        process.StartInfo = new ProcessStartInfo(adb, args)
+        {
+            UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardOutput = true, RedirectStandardError = true,
+            WorkingDirectory = Path.GetDirectoryName(adb) ?? Environment.CurrentDirectory
+        };
+        process.Start();
+        var outputTask = process.StandardOutput.ReadToEndAsync();
+        var errorTask = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(10000))
+        {
+            try { process.Kill(true); } catch { }
+            throw new TimeoutException("انتهت مهلة ADB بعد 10 ثوانٍ.");
+        }
+        Task.WaitAll(outputTask, errorTask);
+        return (process.ExitCode, outputTask.Result, errorTask.Result);
+    }
+
+    private void AdbScan_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (_detected.Count == 0) Scan_Click(sender, e);
+            var adb = FindAdb(_detected);
+            if (adb is null)
+            {
+                ReportText.Text += "\\n\\nلم يتم العثور على adb.exe في المسارات المعروفة أو PATH. شغّل المحاكي أولًا وحدد مجلده يدويًا إذا كان مثبتًا بمسار مخصص.";
+                MessageBox.Show("لم يتم العثور على ADB. تأكد من تثبيت المحاكي ثم أعد الفحص.", "ADB");
+                return;
+            }
+
+            var start = RunAdb(adb, "start-server");
+            var devices = RunAdb(adb, "devices");
+            var deviceLines = devices.Output.Split(new[] { '\\r', '\\n' }, StringSplitOptions.RemoveEmptyEntries)
+                .Where(line => line.Contains("\\tdevice", StringComparison.OrdinalIgnoreCase)).ToArray();
+
+            if (deviceLines.Length == 0)
+            {
+                ReportText.Text += $"\\n\\nADB: {adb}\\nلا يوجد جهاز محاكي متصل. شغّل GameLoop/Tenstore ثم أعد المحاولة.\\n{devices.Output}";
+                MessageBox.Show("تم تشغيل ADB لكن لم يظهر جهاز متصل. افتح المحاكي ثم أعد الفحص.", "لم يتم الاتصال");
+                return;
+            }
+
+            var packageResult = RunAdb(adb, "shell pm list packages");
+            var installed = PubgPackages.Where(pkg => packageResult.Output.Contains("package:" + pkg, StringComparison.OrdinalIgnoreCase)).ToArray();
+            var report = new StringBuilder();
+            report.AppendLine("تم العثور على جهاز ADB:");
+            foreach (var line in deviceLines) report.AppendLine("• " + line);
+            report.AppendLine();
+            report.AppendLine("نسخ PUBG المكتشفة:");
+            report.AppendLine(installed.Length == 0 ? "لم يتم العثور على حزم PUBG المعروفة على الجهاز المتصل." : string.Join("\\n", installed.Select(p => "• " + p)));
+            report.AppendLine();
+            report.AppendLine("لم يتم تعديل أي ملف أو إعداد داخل اللعبة.");
+            ReportText.Text += "\\n\\n" + report;
+            MessageBox.Show(report.ToString(), "فحص ADB وPUBG", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            ReportText.Text += "\\n\\nخطأ ADB: " + ex.Message;
+            MessageBox.Show(ex.Message, "تعذر فحص ADB");
+        }
+    }
+
     private void Scan_Click(object sender, RoutedEventArgs e)
     {
         _detected.Clear();
